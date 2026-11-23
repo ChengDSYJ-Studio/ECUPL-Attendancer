@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-  <title>网址二维码生成器</title>
+  <title>华政考勤二维码生成器</title>
   <style>
     :root {
       color-scheme: light;
@@ -94,36 +94,6 @@
       outline-offset: 3px;
     }
 
-    fieldset {
-      min-width: 0;
-      margin: 1.4rem 0 0;
-      padding: 0;
-      border: 0;
-    }
-
-    legend {
-      width: 100%;
-      padding: 0 0 .85rem;
-      border-bottom: 1px solid var(--border);
-      font-size: .95rem;
-      font-weight: 650;
-    }
-
-    legend span {
-      margin-left: .4rem;
-      color: var(--muted);
-      font-size: .8rem;
-      font-weight: 400;
-    }
-
-    .parameter-pair {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: .75rem;
-      margin-top: .95rem;
-    }
-
-    .parameter-pair .field { margin: 0; }
     .hint { margin-top: .55rem; font-size: .82rem; }
 
     button {
@@ -226,8 +196,8 @@
 <body>
   <main>
     <header>
-      <h1>网址二维码生成器</h1>
-      <p>本地生成带时间戳的网址二维码，每 30 秒自动更新。</p>
+      <h1>华政考勤二维码生成器</h1>
+      <p>离线生成二维码，每 30 秒更新一次北京时间。</p>
     </header>
 
     <div class="workspace">
@@ -236,30 +206,16 @@
         <form id="settings" novalidate>
           <div class="field">
             <label for="base-url">目标网址</label>
-            <input id="base-url" type="url" placeholder="https://example.com/check" required
-                   autocapitalize="off" spellcheck="false">
+            <input id="base-url" type="url" value="https://dudao.ecupl.edu.cn/attendanceMobile/#/" required
+                   autocomplete="off" autocapitalize="off" spellcheck="false">
           </div>
 
           <div class="field">
-            <label for="time-name">时间参数名</label>
-            <input id="time-name" type="text" value="t" placeholder="t"
-                   autocapitalize="off" spellcheck="false">
+            <label for="ip">教室（）填入对应的IP</label>
+            <input id="ip" type="text" placeholder="例如 172.27.29.12" aria-describedby="ip-hint"
+                   autocomplete="off" autocapitalize="off" spellcheck="false">
+            <p class="hint" id="ip-hint">留空时，生成的网址中使用空的 <code>ip</code> 值。</p>
           </div>
-
-          <fieldset aria-describedby="custom-hint">
-            <legend>自定义参数<span>可选</span></legend>
-            <div class="parameter-pair">
-              <div class="field">
-                <label for="custom-name">参数名</label>
-                <input id="custom-name" type="text" autocapitalize="off" spellcheck="false">
-              </div>
-              <div class="field">
-                <label for="custom-value">参数值</label>
-                <input id="custom-value" type="text" autocapitalize="off" spellcheck="false">
-              </div>
-            </div>
-            <p class="hint" id="custom-hint">两项留空时省略此参数。</p>
-          </fieldset>
 
           <button type="submit">生成二维码</button>
           <p class="error" id="error" role="alert" hidden></p>
@@ -1130,12 +1086,20 @@ var qrcodegen;
     const REFRESH_INTERVAL = 30_000;
     const QUIET_ZONE = 4;
     const MODULE_PIXELS = 6;
+    const beijingTime = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Shanghai",
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
 
     const settings = document.getElementById("settings");
     const baseUrl = document.getElementById("base-url");
-    const timeName = document.getElementById("time-name");
-    const customName = document.getElementById("custom-name");
-    const customValue = document.getElementById("custom-value");
+    const ip = document.getElementById("ip");
     const error = document.getElementById("error");
     const canvas = document.getElementById("qr");
     const empty = document.getElementById("empty");
@@ -1174,11 +1138,41 @@ var qrcodegen;
       }
     }
 
-    function renderCode(now) {
-      const url = new URL(active.baseUrl);
-      url.searchParams.set(active.timeName, String(Math.floor(now / 1000)));
+    function readFragment(hash) {
+      const fragment = hash.slice(1);
+      const queryStart = fragment.indexOf("?");
+      if (queryStart < 0) return { route: fragment || "/", query: "" };
+      return { route: fragment.slice(0, queryStart), query: fragment.slice(queryStart + 1) };
+    }
 
-      const encodedUrl = url.href;
+    function setQueryParameter(query, name, value) {
+      const fields = query ? query.split("&") : [];
+      const replacement = `${name}=${encodeURIComponent(value)}`;
+      let replaced = false;
+      const updatedFields = [];
+
+      // Preserve the original encoding of every field other than the one being set.
+      for (const field of fields) {
+        const fieldName = new URLSearchParams(`?${field}`).keys().next().value;
+        if (fieldName !== name) {
+          updatedFields.push(field);
+        } else if (!replaced) {
+          updatedFields.push(replacement);
+          replaced = true;
+        }
+      }
+      if (!replaced) updatedFields.push(replacement);
+      return updatedFields.join("&");
+    }
+
+    function renderCode(now) {
+      const parts = Object.fromEntries(beijingTime.formatToParts(now).map(({ type, value }) => [type, value]));
+      const time = `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+      const withTime = setQueryParameter(active.query, "time", time);
+      const query = setQueryParameter(withTime, "ip", active.ip);
+      active.url.hash = `${active.route}?${query}`;
+
+      const encodedUrl = active.url.href;
       let qr;
       try {
         qr = qrcodegen.QrCode.encodeText(encodedUrl, qrcodegen.QrCode.Ecc.MEDIUM);
@@ -1235,6 +1229,15 @@ var qrcodegen;
     }
 
     settings.addEventListener("input", clearError);
+    baseUrl.addEventListener("input", () => {
+      const url = baseUrl.value.trim();
+      const hashStart = url.indexOf("#");
+      if (hashStart < 0) return;
+
+      const { query } = readFragment(url.slice(hashStart));
+      const suppliedIp = new URLSearchParams(`?${query}`).get("ip");
+      if (suppliedIp !== null) ip.value = suppliedIp;
+    });
     settings.addEventListener("submit", (event) => {
       event.preventDefault();
       clearError();
@@ -1251,21 +1254,8 @@ var qrcodegen;
         return;
       }
 
-      const timestampParameter = timeName.value.trim() || "t";
-      const optionalParameter = customName.value.trim();
-      if (!optionalParameter && customValue.value) {
-        showError("请为自定义参数填写参数名。", customName);
-        return;
-      }
-      if (optionalParameter === timestampParameter) {
-        showError("自定义参数名需要与时间参数名不同。", customName);
-        return;
-      }
-      if (optionalParameter) {
-        url.searchParams.set(optionalParameter, customValue.value);
-      }
-
-      active = { baseUrl: url.href, timeName: timestampParameter, refreshAt: 0 };
+      const { route, query } = readFragment(url.hash);
+      active = { url, route, query, ip: ip.value.trim(), refreshAt: 0 };
       updateClock();
     });
 
